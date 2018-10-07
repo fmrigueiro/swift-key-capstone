@@ -1,0 +1,112 @@
+library(tm)
+library(RWeka)
+library(stringi)
+library(stringr)
+library(knitr)
+library(qdap)
+library(data.table)
+memory.limit(size=56000)
+
+#### Download and save data 
+#specify the source and destination of the download
+#destination_file <- "20180808_Coursera_SwiftKey.zip"
+#source_file <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+
+# execute the download
+#download.file(source_file, destination_file)
+
+# extract the files from the zip file
+#unzip(destination_file)
+#
+#url_profanity <- "http://www.cs.cmu.edu/~biglou/resources/bad-words.txt"
+#profanity_file_destination  <- "final/en_US/profanity.txt"
+#download.file(url_profanity, profanity_file_destination)
+
+#####Load all data 
+blogs = readLines("final/en_US/en_US.blogs.txt", skipNul = T, encoding="UTF-8")
+news = readLines("final/en_US/en_US.news.txt",skipNul = T, encoding="UTF-8")
+twitter = readLines("final/en_US/en_US.twitter.txt",skipNul = T, encoding="UTF-8")
+
+##### Create samples 
+set.seed(2131)
+sample.size=2000
+
+sample.blog=sample(blogs,sample.size)
+sample.new=sample(news,sample.size)
+sample.twitter=sample(twitter,sample.size)
+
+##Clean Data
+
+sample=c(sample.blog,sample.new,sample.twitter)
+
+##remove hyperlinks and twitter @
+sample=gsub("(f|ht)tp(s?)://(.*)[.][a-z]+", " ", sample)
+sample=gsub("@[^\\s]+"," ",sample)
+
+# Remove text within brackets
+sample=bracketX(sample)
+
+##remove latin1 words
+latin.sym=grep("[^NOT_ASCII](NOT_ASCII){2}[^NOT_ASCII]",iconv(sample, "latin1", "ASCII", sub="NOT_ASCII"))
+sample[latin.sym]=stri_trans_general(sample[latin.sym], "latin-ascii")
+sample=gsub('[^\x20-\x7E]', "'", sample)
+
+##replace abbreviate words with their full terms
+sample=replace_abbreviation(sample)
+
+##replace contractions with their base words
+sample=replace_contraction(sample)
+
+##lower case
+sample=tolower(sample)
+
+##remove stopwords
+#sample=removeWords(sample,stopwords("en")) - keep stopwords
+sample=gsub("'[A-z]+", " ", sample)
+
+##remove punctuations
+sample=gsub("[[:punct:]]", " ", sample)
+
+##remove numbers
+sample=removeNumbers(sample)
+
+##remove profanity
+profanity = read.table(file ="final/en_US/profanity.txt", stringsAsFactors=F)
+sample=removeWords(sample,profanity[,1])
+
+##remove extra space
+sample=stripWhitespace(sample)
+
+corpus = VCorpus(VectorSource(sample))
+corpus = tm_map(corpus, PlainTextDocument)
+
+rm(sample.twitter,sample.blog,sample.new)
+rm(profanity,latin.sym)
+rm(sample.size)
+
+##### Frequency table creation
+getFreq = function(tdm,ngram) {
+  gram=function(x) NGramTokenizer(x,Weka_control(min=ngram,max=ngram))
+  tdm = TermDocumentMatrix(tdm,control= list(tokenizer=gram))
+  freq1 = sort(rowSums(as.matrix(tdm)), decreasing = TRUE)
+  freq=data.frame(word = names(freq1), freq = freq1)
+  freq$word=as.character(freq$word)
+  return(freq)
+}
+gc()
+memory.limit(size=56000)
+uni.freq = getFreq(corpus,1)
+bi.freq = getFreq(corpus,2)
+tri.freq= getFreq(corpus,3)
+quad.freq = getFreq(corpus,4)
+
+unigram = setDT(uni.freq)
+save(unigram,file="unigram.Rda")
+rm(unigram,uni.freq)
+bigram = setDT(bi.freq)
+save(bigram,file="bigram.Rda")
+trigram = setDT(tri.freq)
+save(trigram,file="trigram.Rda")
+quadgram=setDT(quad.freq)
+save(quadgram,file="quadgram.Rda")
+

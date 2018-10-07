@@ -1,0 +1,332 @@
+---
+title: "SwiftKey Project_ Milestone Report"
+author: "Filipe Rigueiro"
+date: "October, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This Milestone Report is about exploring the data of the Capstone Project of the Data Science Coursera specialization.
+
+Coursera and SwitfKey are partnering on this project; that apply data science in the area of natural language processing.
+
+The project uses a large text corpus of documents to predict the next word on preceding input.
+
+The data is extracted and cleaned from files and used with the Shiny application.
+
+Here, we have some information about the corpus of data and prepare a plan to create the predictive model.
+
+
+## Loading Data
+
+```{r loading, message=FALSE}
+library(tm)
+library(wordcloud)
+library(RWeka)
+library(stringi)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(qdap)
+
+#### Download and save data 
+#specify the source and destination of the download
+#destination_file <- "20180808_Coursera_SwiftKey.zip"
+#source_file <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+
+# execute the download
+#download.file(source_file, destination_file)
+
+# extract the files from the zip file
+#unzip(destination_file)
+#
+#url_profanity <- "http://www.cs.cmu.edu/~biglou/resources/bad-words.txt"
+#profanity_file_destination  <- "final/en_US/profanity.txt"
+#download.file(url_profanity, profanity_file_destination)
+
+
+blogs = readLines("final/en_US/en_US.blogs.txt", skipNul = T, encoding="UTF-8")
+news = readLines("final/en_US/en_US.news.txt",skipNul = T, encoding="UTF-8")
+twitter = readLines("final/en_US/en_US.twitter.txt",skipNul = T, encoding="UTF-8")
+
+```
+
+First of all, let's look at the data structures and overview.
+
+```{r totaltable}
+
+blog.size = round((file.info("final/en_US/en_US.blogs.txt")$size/1024^2),2)
+new.size= round((file.info("final/en_US/en_US.news.txt")$size/1024^2),2)
+twitter.size = round((file.info("final/en_US/en_US.twitter.txt")$size/1024^2),2)
+
+sum.tab=data.frame(file=c("Blogs","News","Twitter"),
+                   size=c(blog.size,new.size,twitter.size),
+                   lines=c(length(blogs),length(news),length(twitter)),
+                   words=c(sum(stri_count_words(blogs)),
+                           sum(stri_count_words(news)),
+                           sum(stri_count_words(twitter))))           
+names(sum.tab)=c("File","Size(Mb)","Number of Lines","Number of Words")
+
+kable(sum.tab) %>%
+  kable_styling(bootstrap_options="striped",full_width=F)
+
+```
+
+Since the volume of the given database is really big, 2000 of lines will be used for the demonstration of Cleaning and Exploratory Analysis in this Milestone report. Below is the summary table of sample data. 
+
+```{r sampletable}
+set.seed(2131)
+sample.size=2000
+
+sample.blog=sample(blogs,sample.size)
+sample.new=sample(news,sample.size)
+sample.twitter=sample(twitter,sample.size)
+
+sum.samtab=data.frame(file=c("Sample Blogs","Sample News","Sample Twitter"),
+                      size=round((sample.size/c(length(blogs),length(news),length(twitter)))
+                                 *c(blog.size,new.size,twitter.size),2),
+                      lines=c(length(sample.blog),length(sample.new),length(sample.twitter)),
+                      words=c(sum(stri_count_words(sample.blog)),
+                              sum(stri_count_words(sample.new)),
+                              sum(stri_count_words(sample.twitter))))
+names(sum.samtab)=names(sum.tab)
+
+kable(sum.samtab) %>%
+  kable_styling(bootstrap_options="striped",full_width=F)
+
+```
+
+## Cleaning data
+
+The tm package was used to clean the data. This was based on tm and Text Mining in R. 
+The profanity words can be found at CMU.
+
+For cleaning the text data for further text mining process, we will follow below steps:
+
+- Remove URLs and website addresses by change internet addresses into blank space
+- Remove words within brackets
+- Remove symbols encoded in latin1
+- Replace abbreviations and contractions with their base forms
+- Lowercase all words
+- Remove stopwords by replace them into blank space
+- Remove punctuations
+- Remove numbers
+- Remove profinity
+- Remove strip white space and create plain text documents
+- Create Corpus: corpus is created to use in tm_map for text cleaning
+
+```{r cleaning}
+#####Data Cleaning
+
+sample=c(sample.blog,sample.new,sample.twitter)
+
+##remove website link and twitter @
+sample=gsub("(f|ht)tp(s?)://(.*)[.][a-z]+", " ", sample)
+sample=gsub("@[^\\s]+"," ",sample)
+
+# Remove text within brackets
+sample=bracketX(sample)
+
+##remove latin1 words
+latin.sym=grep("[^NOT_ASCII](NOT_ASCII){2}[^NOT_ASCII]",iconv(sample, "latin1", "ASCII", sub="NOT_ASCII"))
+sample[latin.sym]=stri_trans_general(sample[latin.sym], "latin-ascii")
+sample=gsub('[^\x20-\x7E]', "'", sample)
+
+##replace abbreviate words with their full terms
+sample=replace_abbreviation(sample)
+
+##replace contractions with their base words
+sample=replace_contraction(sample)
+
+##lower case
+sample=tolower(sample)
+
+##remove stopwords and unwanted abbreviation
+sample=removeWords(sample,stopwords("en"))
+sample=gsub("'[A-z]+", " ", sample)
+
+##remove punctuations
+sample=gsub("[[:punct:]]", " ", sample)
+
+##remove numbers
+sample=removeNumbers(sample)
+
+##remove profinity
+profanity = read.table(file ="final/en_US/profanity.txt", stringsAsFactors=F)
+sample=removeWords(sample,profanity[,1])
+
+##remove extra space
+sample=stripWhitespace(sample)
+
+corpus = VCorpus(VectorSource(sample))
+corpus = tm_map(corpus, PlainTextDocument)
+
+rm(sample.twitter,sample.blog,sample.new)
+rm(blogs,news,twitter,swear.words,latin.sym)
+
+```
+
+##Tokenization
+We now need break it into words and sentences, and to turn it into n-grams. These are all called tokenization because we are breaking up the text into units of meaning, called tokens.
+
+In Natural Language Processing (NLP), n-gram is a contiguous sequence of n items from a given sequence of text or speech. Unigrams are single words. Bigrams are two words combinations. Trigrams are three-word combinations.
+
+The tokenizer method is allowed in R using the package RWeka. The following function is used to extract 1-grams, 2-grams, 3-grams and 4-grams from the text Corpus using RWeka.
+
+
+## Frequency Table and Visualization by WordCloud
+
+We will examine top 20 most frequently word combination appearance. In particular, unigram, digram and trigram word combination.The frequency will be shown as table, histogram and wordcloud.
+
+```{r freq}
+
+top=20 #number of top frequent appear words
+
+#Frequency table
+getFreq = function(tdm,ngram) {
+  gram=function(x) NGramTokenizer(x,Weka_control(min=ngram,max=ngram))
+  tdm = TermDocumentMatrix(tdm,control= list(tokenizer=gram))
+  freq1 = sort(rowSums(as.matrix(tdm)), decreasing = TRUE)
+  freq=data.frame(word = names(freq1), freq = freq1)
+  freq$word=as.character(freq$word)
+  return(freq)
+}
+
+#Frequency Histogram
+makePlot = function(table, label) {
+  ggplot(table, aes(reorder(word, freq), freq)) +
+    geom_bar(stat = "identity", fill = I("blue"))+
+    coord_flip()+
+    labs(x = label, y = "Frequency")
+}
+
+
+```
+
+###1. Unigram
+
+####a. Frequency Table
+
+```{r table1}
+
+uni.freq = getFreq(corpus,1)
+
+kable(uni.freq[1:top,],row.names = F) %>%
+  kable_styling(bootstrap_options="striped",full_width=F)%>%
+  scroll_box(width = "100%", height = "400px")
+
+```
+
+####b. Frequency Histogram
+
+```{r hist1}
+
+makePlot(uni.freq[1:top,], "20 Most Common Unigrams")
+
+```
+
+####c. Frequency Wordcloud
+
+```{r wordcloud1}
+
+wordcloud(words = uni.freq$word, freq = uni.freq$freq, min.freq = 1,
+            max.words=50, random.order=T, rot.per=0.35, random.color = F,scale=c(4,.2),
+            colors=brewer.pal(8,name= "Set1"))
+
+
+```
+
+###2. Digram
+
+####a. Frequency Table
+
+
+```{r table2}
+
+bi.freq = getFreq(corpus,2)
+
+kable(bi.freq[1:top,],row.names = F) %>%
+  kable_styling(bootstrap_options="striped",full_width=F)%>%
+  scroll_box(width = "100%", height = "400px")
+
+```
+
+
+####b. Frequency Histogram
+
+
+```{r hist2}
+
+makePlot(bi.freq[1:top,], "30 Most Common Bigrams")
+
+```
+
+
+####c. Frequency Wordcloud
+
+
+```{r wordcloud2}
+
+wordcloud(words = bi.freq$word, freq = bi.freq$freq, min.freq = 1,
+            max.words=30, random.order=T, rot.per=0.35, random.color = F,scale=c(3,.1),
+            colors=brewer.pal(8,name= "Set1"))
+
+
+```
+
+
+
+###3. Trigram
+
+
+####a. Frequency Table
+
+```{r table3}
+
+tri.freq = getFreq(corpus,3)
+
+kable(tri.freq[1:top,],row.names = F) %>%
+  kable_styling(bootstrap_options="striped",full_width=F)%>%
+  scroll_box(width = "100%", height = "400px")
+
+```
+
+
+####b. Frequency Histogram
+
+
+```{r hist3}
+
+makePlot(tri.freq[1:top,], "20 Most Common Trigrams")
+
+```
+
+
+####c. Frequency Wordcloud
+
+
+```{r wordcloud3, fig.height=6,fig.width=6}
+
+wordcloud(words = tri.freq$word, freq = tri.freq$freq, min.freq = 1,
+            max.words=30, random.order=T, rot.per=0.35, random.color = T,scale=c(2,.1),
+            colors=brewer.pal(8,name= "Set1"))
+
+
+```
+
+##Findings
+We can conclude after the exploratory analysis that the process is very heavy and requires a lot of processing power and RAM.
+A lot of the frequent words are repeated.
+The more complex the N-Gram the lower the frequency
+
+##What Next?
+Prediction model and plans for Shiny app While the strategy for modeling and prediction has not been finalized, the n-gram model with a frequency look-up table might be used based on the analysis above. A possible method of prediction is to use the 4-gram model to find the most likely next word first. If none is found, then the 3-gram model is used, and so forth. Furthermore, stemming might also be done in data preprocessing.
+
+For the app a simple minimalistic design with probabibily of next word showing displayed, or a button to introduced the next word prediction.
+
